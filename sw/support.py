@@ -17,37 +17,6 @@ def generate_csv_urls(base_url_template, start_time, periods=6, freq='10min'):
         urls.append(f"{base_url}{file_name}")
     return urls
 
-def download_and_combine_csv(urls):
-    """
-    Stáhne CSV soubory z daných URL adres a sloučí je do jedné pandas DataFrame.
-    """
-    df_list = []
-    for url in urls:
-        response = requests.get(url)
-        if response.status_code == 200:
-            csv_content = StringIO(response.content.decode('utf-8'))
-            df = pd.read_csv(csv_content, usecols=['_time', '_value', 'dataId'])
-            df_list.append(df)
-        else:
-            print(f"Failed to download {url}")
-    
-    combined_df = pd.concat(df_list, ignore_index=True)
-    return combined_df
-
-# def main():
-#     base_url_template = "http://space.astro.cz/meteo/meteobox/meteobox_01/{date_path}"
-#     start_time = datetime(2024, 2, 21, 1, 50)  # Příklad: začátek hodiny záznamu
-#     urls = generate_csv_urls(base_url_template, start_time)
-    
-#     combined_df = download_and_combine_csv(urls)
-#     print(combined_df.head())  # Pro zobrazení prvních několika řádků výsledné DataFrame
-#     # combined_df.to_csv("combined_data.csv", index=False)  # Volitelně uložit do souboru
-
-# if __name__ == "__main__":
-#     main()
-
-
-
 
 import requests
 from bs4 import BeautifulSoup
@@ -85,6 +54,38 @@ def download_and_combine_csv(urls):
     
     combined_df = pd.concat(df_list, ignore_index=True)
     return combined_df
+
+def resample_sensor_data(combined_df):
+    # Resample data for each sensor
+    resampled_data = []
+    unique_combinations = combined_df[['dataId', '_field']].drop_duplicates()
+    for index, row in tqdm(unique_combinations.iterrows(), total=unique_combinations.shape[0], desc="Resampling data"):
+        sensor = row['dataId']
+        field = row['_field']
+        sensor_data = combined_df[(combined_df['dataId'] == sensor) & (combined_df['_field'] == field)]
+        # Convert _time to datetime
+        sensor_data.loc[:, '_time'] = pd.to_datetime(sensor_data['_time'])
+        resampled = sensor_data.resample('10T', on='_time').agg({'_value': 'mean', '_field': 'first'})
+        resampled['dataId'] = sensor
+        resampled_data.append(resampled)
+
+    # Combine all resampled data
+    resampled_df = pd.concat(resampled_data)
+
+    # Reset index
+    resampled_df.reset_index(inplace=True)
+
+    return resampled_df
+
+def pivot_sensor_data(resampled_df):
+    # Pivot the DataFrame
+    pivot_df = resampled_df.pivot_table(index='_time', columns=['dataId', '_field'], values='_value')
+    pivot_df.columns = pivot_df.columns.map('_'.join)
+
+    # Reset the index
+    pivot_df.reset_index(inplace=True)
+
+    return pivot_df
 
 def main():
     date_path = datetime.now().strftime("%Y/%m/%d/")  # Dynamické generování cesty podle aktuálního data
